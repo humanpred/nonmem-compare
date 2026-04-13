@@ -1,0 +1,15 @@
+# NONMEM result directories (tag/ode/ and tag/solved/ trees)
+# Pattern: {version}-ubuntu{release}-gfortran{ver}-{arch}/
+*-ubuntu*-gfortran*-amd64/
+*-ubuntu*-gfortran*-arm64/
+
+# Generated top-level files
+system_details.txt
+nonmem-results-*.zip
+
+# NONMEM passwords and license files — NEVER commit these
+nonmem_passwords.conf
+nonmem.lic
+
+# NONMEM installer files directory (if placed at repo root)
+nonmem-files/

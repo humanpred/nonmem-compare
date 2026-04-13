@@ -98,7 +98,7 @@ sudo ./setup_root.sh --user $USER
 sudo ./setup_root.sh --user $USER --with-awscli
 ```
 
-**After this step, log out and back in** (or run `newgrp docker`) for the docker group
+**After this step, run `newgrp docker`** (or log out and back in) for the docker group
 membership to take effect.
 
 ### Step 4: User setup

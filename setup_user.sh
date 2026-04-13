@@ -35,8 +35,8 @@ if ! command -v docker &>/dev/null; then
 fi
 if ! docker info &>/dev/null; then
   echo "ERROR: Cannot connect to Docker daemon."
-  echo "  If you just ran setup_root.sh, you need to log out and back in"
-  echo "  (or run: newgrp docker) for the docker group to take effect."
+  echo "  If you just ran setup_root.sh, run: newgrp docker"
+  echo "  (or log out and back in) for the docker group to take effect."
   exit 1
 fi
 echo "  Docker accessible: $(docker --version)"

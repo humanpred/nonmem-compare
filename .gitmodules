@@ -1,0 +1,6 @@
+[submodule "nlmixr2test"]
+	path = nlmixr2test
+	url = https://github.com/nlmixr2/nlmixr2test.git
+[submodule "Pharmacometrics-Docker"]
+	path = Pharmacometrics-Docker
+	url = git@github.com:billdenney/Pharmacometrics-Docker.git

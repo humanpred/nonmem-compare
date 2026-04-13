@@ -35,14 +35,57 @@ nonmem-compare/
 
 ## Setup
 
-### Step 1: Clone with submodules
+### Step 1: Set up GitHub access
+
+The repository and its submodules are hosted on GitHub. You need either an SSH
+key or a personal access token configured before cloning.
+
+#### Option A: SSH key (recommended)
 
 ```bash
-git clone --recurse-submodules https://github.com/humanpredictions/nonmem-compare.git
+# Generate a new SSH key (skip if you already have one)
+ssh-keygen -t ed25519 -C "your_email@example.com"
+
+# Print the public key — copy this output
+cat ~/.ssh/id_ed25519.pub
+```
+
+Add the public key to your GitHub account:
+1. Go to **GitHub → Settings → SSH and GPG keys → New SSH key**
+2. Paste the key and save
+
+Test the connection:
+
+```bash
+ssh -T git@github.com
+# Expected: "Hi <username>! You've successfully authenticated..."
+```
+
+#### Option B: HTTPS with a personal access token
+
+```bash
+# Install the Git credential helper (included with Git on most systems)
+git config --global credential.helper store
+
+# On first clone/push, Git will prompt for your username and token.
+# Generate a token at: GitHub → Settings → Developer settings →
+#   Personal access tokens → Tokens (classic) → New token
+# Required scopes: repo (read)
+```
+
+### Step 2: Clone with submodules
+
+```bash
+# SSH (recommended — requires Step 1 Option A):
+git clone --recurse-submodules git@github.com:humanpred/nonmem-compare.git
+cd nonmem-compare
+
+# HTTPS (requires Step 1 Option B):
+git clone --recurse-submodules https://github.com/humanpred/nonmem-compare.git
 cd nonmem-compare
 ```
 
-### Step 2: Root system setup
+### Step 3: Root system setup
 
 Run once as root/sudo. This installs Docker CE and adds your user to the `docker` group.
 Include `--with-awscli` if you plan to pull images from ECR.
@@ -58,7 +101,7 @@ sudo ./setup_root.sh --user $USER --with-awscli
 **After this step, log out and back in** (or run `newgrp docker`) for the docker group
 membership to take effect.
 
-### Step 3: User setup
+### Step 4: User setup
 
 Run once as the user who will run make:
 
@@ -68,7 +111,7 @@ Run once as the user who will run make:
 
 This initializes the git submodules and checks AWS CLI configuration if applicable.
 
-### Step 4: Get Docker images
+### Step 5: Get Docker images
 
 Choose **one** of the following options.
 
@@ -151,7 +194,7 @@ $NONMEM_ZIP_DIR/
 On an amd64 host, add `--arm64` to also build arm64 images (requires docker buildx
 with QEMU; see `Pharmacometrics-Docker/build_matrix.sh` for setup instructions).
 
-### Step 5: Run the comparison
+### Step 6: Run the comparison
 
 From the repository root:
 
@@ -184,7 +227,7 @@ Expected output per tag (e.g., `7.6.0-ubuntu24.04-gfortran12-arm64/`):
 To resume after interruption, simply re-run `make -j$(nproc)` — Make skips
 already-completed `.lst` files.
 
-### Step 6: Collect results
+### Step 7: Collect results
 
 ```bash
 ./collect-results.sh

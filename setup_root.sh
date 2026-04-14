@@ -13,7 +13,7 @@
 #   4. Optionally installs AWS CLI v2 (required only for ECR image pull)
 #
 # After running:
-#   Log out and back in (or run: newgrp docker) for the docker group to take effect.
+#   Run 'newgrp docker' (or log out and back in) for the docker group to take effect.
 #   Then run ./setup_user.sh as the target user.
 
 set -euo pipefail
@@ -136,7 +136,7 @@ fi
 echo "================================================================"
 echo " Root setup complete."
 echo ""
-echo " IMPORTANT: Log out and back in (or run: newgrp docker) for the"
+echo " IMPORTANT: Run 'newgrp docker' (or log out and back in) for the"
 echo " docker group membership to take effect for $USERNAME."
 echo ""
 echo " Then, as $USERNAME, run:"

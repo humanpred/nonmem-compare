@@ -27,9 +27,9 @@ nonmem-compare/
 
 - **Hardware**: Any amd64 or arm64 machine (Raspberry Pi 4/5 recommended for arm64)
 - **OS**: Ubuntu 24.04 LTS
-- **Disk space**:
-  - arm64: ~50 GB for images + ~2 GB for results
-  - amd64: ~500 GB for images + ~20 GB for results
+- **Disk space** (measured actual deduplicated Docker image storage):
+  - arm64: ~8.2 GB for images + ~2 GB for results
+  - amd64: ~81 GB for images + ~20 GB for results
 - **NONMEM Docker images**: access via ECR (requires AWS credentials) or build from source
   (requires NONMEM installer files from Icon)
 
@@ -98,7 +98,7 @@ sudo ./setup_root.sh --user $USER
 sudo ./setup_root.sh --user $USER --with-awscli
 ```
 
-**After this step, log out and back in** (or run `newgrp docker`) for the docker group
+**After this step, run `newgrp docker`** (or log out and back in) for the docker group
 membership to take effect.
 
 ### Step 4: User setup

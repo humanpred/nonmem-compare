@@ -13,7 +13,9 @@
 # Per-run output:
 #   <name>.lst       — NONMEM's own output file
 #   <name>.nmfe.log  — stdout+stderr captured from the nmfe wrapper
-#   .failures        — list of failed basenames (only created when runs fail)
+#   .failures        — list of failed basenames (only created when runs fail);
+#                      entries are prefixed "FAILED (license expired):" when the
+#                      NONMEM license has expired, or "FAILED:" otherwise
 #
 # Targets are generated dynamically from:
 #   - available Docker image tags (queried from local docker at parse time)
@@ -143,10 +145,14 @@ $(1)/ode/$(2).lst: $(1)/ode/.setup
 	  $(REGISTRY):$(1) \
 	  sh -c 'cd /data && \
 	    /opt/NONMEM/nm_current/util/nmfe $(2).ctl $(2).lstinterim \
-	      > $(2).nmfe.log 2>&1 && \
-	    grep -qF "Stop Time:" $(2).lstinterim && \
-	    mv $(2).lstinterim $(2).lst \
-	    || echo "FAILED: $(2)" >> .failures'
+	      > $(2).nmfe.log 2>&1; \
+	    if grep -qF "NONMEM LICENSE HAS EXPIRED" $(2).lstinterim 2>/dev/null; then \
+	      echo "FAILED (license expired): $(2)" >> .failures; \
+	    elif grep -qF "Stop Time:" $(2).lstinterim 2>/dev/null; then \
+	      mv $(2).lstinterim $(2).lst; \
+	    else \
+	      echo "FAILED: $(2)" >> .failures; \
+	    fi'
 	-mv "$(1)/ode/$(2)-run/$(2).nmfe.log" "$(1)/ode/$(2).nmfe.log"
 	{ [ -f "$(1)/ode/$(2)-run/.failures" ] && cat "$(1)/ode/$(2)-run/.failures" >> "$(1)/ode/.failures"; } || true
 	mv "$(1)/ode/$(2)-run/$(2).lst" "$(1)/ode/$(2).lst"
@@ -163,10 +169,14 @@ $(1)/solved/$(2).lst: $(1)/ode/.setup
 	  $(REGISTRY):$(1) \
 	  sh -c 'cd /data && \
 	    /opt/NONMEM/nm_current/util/nmfe $(2).ctl $(2).lstinterim \
-	      > $(2).nmfe.log 2>&1 && \
-	    grep -qF "Stop Time:" $(2).lstinterim && \
-	    mv $(2).lstinterim $(2).lst \
-	    || echo "FAILED: $(2)" >> .failures'
+	      > $(2).nmfe.log 2>&1; \
+	    if grep -qF "NONMEM LICENSE HAS EXPIRED" $(2).lstinterim 2>/dev/null; then \
+	      echo "FAILED (license expired): $(2)" >> .failures; \
+	    elif grep -qF "Stop Time:" $(2).lstinterim 2>/dev/null; then \
+	      mv $(2).lstinterim $(2).lst; \
+	    else \
+	      echo "FAILED: $(2)" >> .failures; \
+	    fi'
 	-mv "$(1)/solved/$(2)-run/$(2).nmfe.log" "$(1)/solved/$(2).nmfe.log"
 	{ [ -f "$(1)/solved/$(2)-run/.failures" ] && cat "$(1)/solved/$(2)-run/.failures" >> "$(1)/solved/.failures"; } || true
 	mv "$(1)/solved/$(2)-run/$(2).lst" "$(1)/solved/$(2).lst"

@@ -1,0 +1,33 @@
+Pathlist information for compiler and MPI systems are located in nmpathlist.txt
+
+Starting NMTRAN
+Recompiling certain components
+Assembler messages:
+Fatal error: can't create PRPNM.o: No such file or directory
+Building NONMEM Executable
+Starting nonmem execution ...
+At line 204 of file  (unit = 8, file = 'FSTREAM')
+Fortran runtime error: End of file
+
+Error termination. Backtrace:
+#0  0x7bafa1ec6e59 in ???
+#1  0x7bafa1ec7a71 in ???
+#2  0x7bafa1ec86dc in ???
+#3  0x7bafa215e6c3 in ???
+#4  0x7bafa215ecda in ???
+#5  0x7bafa215ae84 in ???
+#6  0x7bafa2160274 in ???
+#7  0x7bafa21615e2 in ???
+#8  0x5b6dfa8611f1 in ???
+#9  0x5b6dfa68058e in ???
+#10  0x5b6dfa4f66f4 in ???
+#11  0x7bafa1aab1c9 in ???
+#12  0x7bafa1aab28a in ???
+#13  0x5b6dfa4f67a4 in ???
+#14  0xffffffffffffffff in ???
+License Registered to: Human Predictions LLC
+Expiration Date:    14 APR 2026
+Current Date:        5 APR 2026
+  **** WARNING!!! Days until program expires :   9 ****
+  **** CONTACT idssoftware@iconplc.com FOR RENEWAL ****
+Done with nonmem execution

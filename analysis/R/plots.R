@@ -62,34 +62,93 @@ plot_forest <- function(df, title = NULL) {
 }
 
 # ---------------------------------------------------------------------------
-# OFV per CTL across tags: box-and-strip plot. The OFV is the single best
-# scalar reproducibility check, because two estimations that find the same
-# minimum should agree to many decimal places.
+# OFV per CTL across tags: deviations from per-CTL median, on a chi-squared
+# (df=1) scale. Reference dashed lines mark the standard LRT thresholds:
+# 3.84 (p=0.05), 6.63 (p=0.01), 10.83 (p=0.001). Any systematic delta for
+# the same model on the same data is purely numerical, but these thresholds
+# tell us whether the disagreement would alter a typical nested-model
+# comparison.
 plot_ofv_distribution <- function(df) {
-  # One row per (tag, ctl): take the OFV from the first parameter row of each.
   ofv_df <- unique(df[, c("tag", "ctl", "ofv", "converged",
                           "nm_version", "arch")])
   ofv_df <- ofv_df[ofv_df$converged & is.finite(ofv_df$ofv), , drop = FALSE]
   if (nrow(ofv_df) == 0L) return(ggplot() + labs(title = "(no converged OFV data)"))
 
-  # Centre each CTL's OFV on its median for visual comparability.
   med <- ave(ofv_df$ofv, ofv_df$ctl, FUN = function(x) median(x, na.rm = TRUE))
   ofv_df$ofv_delta <- ofv_df$ofv - med
 
+  # Symmetric chi-squared reference lines.
+  thresholds <- data.frame(
+    y = c(3.84, 6.63, 10.83, -3.84, -6.63, -10.83),
+    label = c("3.84 (p=0.05)", "6.63 (p=0.01)", "10.83 (p=0.001)",
+              "", "", "")
+  )
+
   ggplot(ofv_df, aes(x = ctl, y = ofv_delta)) +
+    geom_hline(data = thresholds, aes(yintercept = y),
+               linetype = "dashed", colour = "grey60", linewidth = 0.3) +
     geom_jitter(aes(colour = nm_version, shape = arch),
                 width = 0.2, height = 0, size = 1.2, alpha = 0.7) +
     geom_boxplot(outlier.shape = NA, fill = NA) +
     scale_colour_viridis_d(option = "plasma", end = 0.9) +
     labs(
       x = NULL,
-      y = "OFV - median(OFV) per CTL",
+      y = "OFV - median(OFV) per CTL  (chi-squared df=1 scale)",
       title = "OFV variability across image variants",
+      subtitle = "Dashed lines mark p=0.05 (3.84), p=0.01 (6.63), p=0.001 (10.83)",
       colour = "NONMEM\nversion",
       shape = "Arch"
     ) +
     theme_minimal(base_size = 9) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 6))
+}
+
+# ---------------------------------------------------------------------------
+# Per-CTL reproducibility scoreboard: stacked bar of tier proportions per
+# CTL, sorted by pct_good ascending so the least-reproducible CTLs appear
+# first. Useful for spotting which models are noisy across versions.
+plot_ctl_reproducibility <- function(df, top_n = 50L) {
+  d <- df[!is.na(df$tier) & df$param_type %in%
+            c("theta", "omega", "sigma", "eta_shrinkage"), , drop = FALSE]
+  if (nrow(d) == 0L) return(ggplot() + labs(title = "(no data)"))
+
+  d$tier <- factor(d$tier, levels = DIFF_TIERS)
+  tab <- as.data.frame(table(ctl = d$ctl, tier = d$tier),
+                       stringsAsFactors = FALSE)
+  total <- ave(tab$Freq, tab$ctl, FUN = sum)
+  tab$prop <- ifelse(total > 0, tab$Freq / total, 0)
+
+  # Order CTLs by share of (identical + noise) ascending.
+  good_share <- aggregate(
+    Freq ~ ctl,
+    data = subset(tab, tier %in% c("identical", "noise")),
+    FUN = sum
+  )
+  total_per_ctl <- aggregate(Freq ~ ctl, data = tab, FUN = sum)
+  scores <- merge(good_share, total_per_ctl, by = "ctl",
+                  suffixes = c("_good", "_tot"))
+  scores$pct_good <- 100 * scores$Freq_good / scores$Freq_tot
+  scores <- scores[order(scores$pct_good), ]
+  if (nrow(scores) > top_n) scores <- scores[seq_len(top_n), ]
+
+  tab <- tab[tab$ctl %in% scores$ctl, ]
+  tab$ctl <- factor(tab$ctl, levels = rev(scores$ctl))
+  tab$tier <- factor(tab$tier, levels = rev(DIFF_TIERS))
+
+  ggplot(tab, aes(y = ctl, x = prop, fill = tier)) +
+    geom_col() +
+    scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+    scale_fill_manual(values = TIER_PALETTE, drop = FALSE,
+                      breaks = DIFF_TIERS) +
+    labs(
+      x = "Share of parameter cells",
+      y = NULL,
+      fill = "Tier",
+      title = sprintf("Per-CTL reproducibility (top %d least reproducible)",
+                      nrow(scores))
+    ) +
+    theme_minimal(base_size = 8) +
+    theme(axis.text.y = element_text(size = 6))
 }
 
 # ---------------------------------------------------------------------------

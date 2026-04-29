@@ -57,21 +57,24 @@ Everything written to `analysis/outputs/` (gitignored):
 
 ```
 outputs/
-├── parsed_results.rds                    # cache of raw nmlst() output
-├── analysis_report.md                    # human-readable summary
+├── parsed_results.rds                       # cache of raw nmlst() output
+├── analysis_report.md                       # human-readable summary
 ├── data/
-│   ├── nonmem_compare.csv                # population-level tidy frame
-│   ├── nonmem_compare_individuals.csv    # per-subject ETA realisations
-│   ├── pairwise_diffs.csv                # relative diffs from per-CTL median
-│   ├── diff_summary.csv                  # tier counts by parameter class
-│   ├── variance_decomp.csv               # factor variance shares
-│   ├── ofv_summary.csv                   # per-CTL OFV statistics
-│   └── convergence_matrix.csv            # (ctl × tag) success/fail
+│   ├── nonmem_compare.csv                   # population-level tidy frame
+│   ├── nonmem_compare_individuals.csv       # per-subject ETA realisations
+│   ├── pairwise_diffs.csv                   # relative diffs from per-CTL median
+│   ├── diff_summary.csv                     # tier counts by parameter class
+│   ├── variance_decomp.csv                  # factor variance shares
+│   ├── ofv_summary.csv                      # per-CTL OFV statistics (chi-squared scale)
+│   ├── ctl_reproducibility.csv              # per-CTL reproducibility score
+│   ├── model_class_reproducibility.csv      # per-class reproducibility score
+│   └── convergence_matrix.csv               # (ctl × tag) success/fail
 └── figures/
     ├── forest_thetas.pdf
-    ├── ofv_distribution.pdf
+    ├── ofv_distribution.pdf                 # ΔOFV with χ² reference lines
     ├── heatmap_diff_classes.pdf
     ├── variance_decomp_summary.pdf
+    ├── ctl_reproducibility.pdf              # per-CTL tier breakdown stacked bars
     └── convergence_matrix.pdf
 ```
 
@@ -86,16 +89,28 @@ outputs/
 | `arch`            | `amd64` or `arm64`                                               |
 | `model_dir`       | `ode` or `solved`                                                |
 | `ctl`             | CTL filename without extension (`runODE001`)                     |
+| `model_class`     | first token of `$PROB` line (e.g. `Bolus_1CPT_VCL`, `Oral1_2CPT_KAV1QV2VMKM`) |
+| `advan`           | NONMEM ADVAN routine from `$SUBR` (e.g. `ADVAN1`, `ADVAN13`)     |
+| `trans`           | NONMEM TRANS spec from `$SUBR` (e.g. `TRANS2`); `NA` if not given |
+| `is_ode`          | `TRUE` for general ODE solvers (ADVAN6/8/9/13/14/15)             |
+| `is_mm`           | `TRUE` if `MM` appears in the `$PROB` model name (Michaelis-Menten) |
 | `param_type`      | `theta`/`omega`/`sigma`/`eta_shrinkage`/`epsilon_shrinkage`/`meta` |
 | `param_name`      | parameter label (`theta1`, `eta2`, `omega1.2`, `eps1`, `eta_shrinkage_TYPE4_1`, …) |
 | `estimate`        | NONMEM scalar estimate (or shrinkage value)                      |
 | `se`              | standard error from `sqrt(diag(cov))`; NA where covariance step failed |
+| `is_fixed`        | `TRUE` if the parameter was `FIX` in the control stream (signalled by SE=0 in cov); `FALSE` for estimated; `NA` for shrinkage rows where the concept doesn't apply |
 | `converged`       | `TRUE` if the .lst contained `"Stop Time:"`                      |
 | `ofv`             | objective function value for the run                             |
 | `n_obs`           | NONMEM-reported number of observations                           |
 | `n_sub`           | NONMEM-reported number of subjects                               |
 | `elapsed_sec`     | total elapsed estimation time                                    |
 | `term_info`       | NONMEM termination message (first non-empty line)                |
+
+Fixed parameters (`is_fixed = TRUE`) are kept in `nonmem_compare.csv` so you
+can see what was fixed, but they are **excluded** from `pairwise_diffs.csv`
+tier classification, from `variance_decomp.csv`, and from per-CTL/per-class
+reproducibility scores. They would otherwise inflate the "identical" tier
+since they are trivially identical across all runs.
 
 ### `nonmem_compare_individuals.csv` schema
 
@@ -120,6 +135,38 @@ the relative difference `(estimate − median_for_ctl_param) / |median|`:
 | small        | `[1e-3, 1e-2)`   | detectable; unlikely to alter PK summary statistics    |
 | substantial  | `[1e-2, 1e-1)`   | could shift covariate effects or AUC/Cmax noticeably   |
 | major        | `≥ 1e-1`         | results disagree by ≥ 10% — different model in practice |
+
+The reference value for each `(ctl, param_name)` is the median across all
+*converged, non-fixed* runs for that combination. Fixed parameters (FIX in
+the control stream) get `tier = NA` and are excluded from tier counts.
+
+### OFV variability — chi-squared scale
+
+OFV is `-2 log-likelihood`, so absolute differences map onto a chi-squared
+distribution with 1 degree of freedom (matching a typical nested
+likelihood-ratio test). `ofv_summary.csv` reports for each CTL:
+
+| column            | meaning                                                          |
+|-------------------|------------------------------------------------------------------|
+| `range_ofv`       | `max(OFV) - min(OFV)` across converged tags                      |
+| `max_abs_dev`     | max `|OFV - median|` across converged tags                       |
+| `pct_within_385`  | `%` of tags whose OFV is within 3.84 of the per-CTL median (p=0.05 LRT) |
+| `pct_within_663`  | `%` within 6.63 (p=0.01 LRT)                                     |
+| `pct_within_1083` | `%` within 10.83 (p=0.001 LRT)                                   |
+
+For *the same model on the same data* across image variants any systematic
+ΔOFV is purely numerical, but these thresholds tell us whether the
+disagreement is large enough to alter a typical nested-model comparison.
+
+### Reproducibility ranking
+
+`ctl_reproducibility.csv` and `model_class_reproducibility.csv` rank CTLs
+and model classes by `pct_good`, the fraction of `(tag × parameter)` cells
+in identical or noise tier (i.e. relative diff < 1e-3). Higher = more
+reproducible. `pct_major` is the fraction in the worst tier (≥ 10%
+relative diff). Useful for spotting which model classes (e.g. analytic
+ADVAN1-4 vs general ODE solver ADVAN13) are systematically more or less
+reproducible across image variants.
 
 ### Variance decomposition
 

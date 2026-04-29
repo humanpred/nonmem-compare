@@ -108,6 +108,50 @@ classify_label <- function(label) {
 }
 
 # ---------------------------------------------------------------------------
+# Parse model metadata from the NONMEM control stream (returned by nmlst()).
+# Key fields:
+#   - $PROB title:  "Bolus_1CPT_VCL ODE SINGLE DOSE FOCE INTER (...) runID"
+#                   first three underscore-delimited tokens give a useful
+#                   model class label (route, compartments, parameterisation)
+#   - $SUBR line:   "ADVAN13 TOL=6" or "ADVAN1,TRANS2"
+#                   ADVAN6/8/13 are general ODE solvers (is_ode = TRUE)
+parse_control <- function(control_lines) {
+  out <- list(
+    model_class = NA_character_,
+    advan       = NA_character_,
+    trans       = NA_character_,
+    is_ode      = NA,
+    is_mm       = NA
+  )
+  if (is.null(control_lines) || length(control_lines) == 0L) return(out)
+
+  prob_line <- control_lines[grepl("^\\$PROB", control_lines, perl = TRUE)][1]
+  if (!is.na(prob_line)) {
+    body <- sub("^\\$PROB[[:space:]]+", "", prob_line)
+    # First whitespace-delimited token contains the model name e.g.
+    #   "Bolus_1CPT_VCL"   or   "Oral_2CPTMM_VKAKEMM"
+    first_token <- strsplit(body, "[[:space:]]+")[[1]][1]
+    out$model_class <- first_token
+    out$is_mm <- grepl("MM", first_token, fixed = TRUE)
+  }
+
+  subr_line <- control_lines[grepl("^\\$SUBR", control_lines, perl = TRUE)][1]
+  if (!is.na(subr_line)) {
+    body <- sub("^\\$SUBR[[:space:]]+", "", subr_line)
+    advan <- regmatches(body, regexpr("ADVAN\\d+", body))
+    out$advan <- if (length(advan)) advan else NA_character_
+    trans <- regmatches(body, regexpr("TRANS\\d+", body))
+    out$trans <- if (length(trans)) trans else NA_character_
+    # ADVAN6, 8, 9, 13, 14, 15 are the general ODE solvers in NONMEM.
+    if (!is.na(out$advan)) {
+      n <- as.integer(sub("ADVAN", "", out$advan))
+      out$is_ode <- n %in% c(6L, 8L, 9L, 13L, 14L, 15L)
+    }
+  }
+  out
+}
+
+# ---------------------------------------------------------------------------
 # Main extractor. Returns a data.frame with columns:
 #   tag, model_dir, ctl, param_type, param_name, estimate, se, converged,
 #   ofv, n_obs, n_sub, elapsed_sec, term_info
@@ -121,23 +165,33 @@ extract_lst <- function(lst_path) {
   model_dir <- basename(dirname(lst_path))                 # "ode" or "solved"
   tag       <- basename(dirname(dirname(lst_path)))        # the image tag
 
-  base_cols <- function(...) {
-    data.frame(
-      tag = tag, model_dir = model_dir, ctl = ctl,
-      ..., stringsAsFactors = FALSE
-    )
-  }
-
   # Convergence is computed regardless of whether nmlst() succeeds.
   converged <- is_converged(lst_path)
 
   res <- tryCatch(nmlst(lst_path), error = function(e) {
     structure(list(error = conditionMessage(e)), class = "nmlst_error")
   })
+
+  # Model metadata (NA if parse failed; otherwise extracted from $PROB / $SUBR).
+  meta <- if (inherits(res, "nmlst_error")) parse_control(NULL)
+          else parse_control(res$control)
+
+  base_cols <- function(...) {
+    data.frame(
+      tag = tag, model_dir = model_dir, ctl = ctl,
+      model_class = meta$model_class,
+      advan       = meta$advan,
+      trans       = meta$trans,
+      is_ode      = meta$is_ode,
+      is_mm       = meta$is_mm,
+      ..., stringsAsFactors = FALSE
+    )
+  }
+
   if (inherits(res, "nmlst_error")) {
     return(base_cols(
       param_type = "meta", param_name = "parse_error",
-      estimate = NA_real_, se = NA_real_,
+      estimate = NA_real_, se = NA_real_, is_fixed = NA,
       converged = converged, ofv = NA_real_,
       n_obs = NA_integer_, n_sub = NA_integer_,
       elapsed_sec = NA_real_, term_info = res$error
@@ -165,11 +219,17 @@ extract_lst <- function(lst_path) {
   if (length(ses) > 0L) {
     for (lbl in names(ses)) {
       cls <- classify_label(lbl)
+      se_val <- unname(ses[lbl])
+      # NONMEM marks a parameter as FIX in the control stream by giving it
+      # zero variance in the cov matrix (so SE = 0). NA SE means the cov
+      # step failed; that is *not* the same as "fixed".
+      is_fixed <- !is.na(se_val) && se_val == 0
       param_rows[[length(param_rows) + 1L]] <- base_cols(
         param_type  = cls[1],
         param_name  = cls[2],
         estimate    = estimate_for_label(lbl, res),
-        se          = unname(ses[lbl]),
+        se          = se_val,
+        is_fixed    = is_fixed,
         converged   = converged,
         ofv         = ofv,
         n_obs       = n_obs,
@@ -180,12 +240,15 @@ extract_lst <- function(lst_path) {
     }
   } else {
     # Fallback: cov matrix unavailable. Still emit estimates (no SE).
+    # Fallback: cov is unavailable, so we cannot tell fixed vs estimated.
+    # Set is_fixed = NA for clarity.
     if (!is.null(res$theta) && length(res$theta) > 0L) {
       for (i in seq_along(res$theta)) {
         nm <- names(res$theta)[i] %||% sprintf("theta%d", i)
         param_rows[[length(param_rows) + 1L]] <- base_cols(
           param_type  = "theta", param_name = nm,
           estimate    = unname(res$theta[i]), se = NA_real_,
+          is_fixed    = NA,
           converged   = converged, ofv = ofv,
           n_obs = n_obs, n_sub = n_sub,
           elapsed_sec = elapsed_sec, term_info = term_info
@@ -204,6 +267,7 @@ extract_lst <- function(lst_path) {
         param_rows[[length(param_rows) + 1L]] <- base_cols(
           param_type  = "omega", param_name = nm,
           estimate    = v, se = NA_real_,
+          is_fixed    = NA,
           converged   = converged, ofv = ofv,
           n_obs = n_obs, n_sub = n_sub,
           elapsed_sec = elapsed_sec, term_info = term_info
@@ -215,6 +279,7 @@ extract_lst <- function(lst_path) {
         param_rows[[length(param_rows) + 1L]] <- base_cols(
           param_type  = "sigma", param_name = sprintf("eps%d", i),
           estimate    = res$sigma[i, i], se = NA_real_,
+          is_fixed    = NA,
           converged   = converged, ofv = ofv,
           n_obs = n_obs, n_sub = n_sub,
           elapsed_sec = elapsed_sec, term_info = term_info
@@ -247,6 +312,7 @@ extract_lst <- function(lst_path) {
             param_name  = name,
             estimate    = shk[[col]][r],
             se          = NA_real_,
+            is_fixed    = FALSE,  # shrinkage is a derived statistic, never fixed
             converged   = converged, ofv = ofv,
             n_obs       = n_obs, n_sub = n_sub,
             elapsed_sec = elapsed_sec, term_info = term_info
@@ -259,7 +325,7 @@ extract_lst <- function(lst_path) {
   if (length(param_rows) == 0L) {
     return(base_cols(
       param_type = "meta", param_name = "no_params",
-      estimate = NA_real_, se = NA_real_,
+      estimate = NA_real_, se = NA_real_, is_fixed = NA,
       converged = converged, ofv = ofv,
       n_obs = n_obs, n_sub = n_sub,
       elapsed_sec = elapsed_sec, term_info = term_info

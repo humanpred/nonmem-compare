@@ -23,8 +23,10 @@
 #'   columns giving the share (proportion 0..1) of total SS attributable to
 #'   each factor plus residual share.
 decompose_variance <- function(df) {
-  # Only converged runs contribute; failures would otherwise inflate residual SS.
-  df <- df[df$converged & is.finite(df$estimate), , drop = FALSE]
+  # Drop failed runs (would otherwise inflate residual SS) and fixed-value
+  # rows (zero variance by construction; not informative about reproducibility).
+  fixed <- isTRUE_vec(df$is_fixed)
+  df <- df[df$converged & is.finite(df$estimate) & !fixed, , drop = FALSE]
 
   # Factor levels prepared as character (lm coerces to factor anyway, but this
   # keeps type predictable).

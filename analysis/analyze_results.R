@@ -178,8 +178,10 @@ if (!is.null(ind) && nrow(ind) > 0L) {
 
 # Re-order columns for readability.
 pop_cols <- c("tag", "nm_version", "ubuntu_version", "gfortran_version", "arch",
-              "model_dir", "ctl", "param_type", "param_name", "estimate", "se",
-              "converged", "ofv", "n_obs", "n_sub", "elapsed_sec", "term_info")
+              "model_dir", "ctl", "model_class", "advan", "trans", "is_ode",
+              "is_mm", "param_type", "param_name", "estimate", "se",
+              "is_fixed", "converged", "ofv", "n_obs", "n_sub",
+              "elapsed_sec", "term_info")
 pop <- pop[, intersect(pop_cols, colnames(pop)), drop = FALSE]
 
 cat(sprintf("Joined metadata: %d tags, %d population rows\n",
@@ -232,24 +234,55 @@ cat(sprintf("Wrote %s (%d parameter rows)\n",
 
 # ---------------------------------------------------------------------------
 # Stage 7: OFV summary per CTL.
-one_per <- unique(pop_pop[, c("tag", "ctl", "ofv", "converged", "nm_version",
-                              "arch")])
+#
+# OFV is -2 log-likelihood, so absolute differences map onto a chi-squared(1)
+# scale: 3.84 corresponds to p=0.05 in a likelihood-ratio test, 6.63 to p=0.01,
+# 10.83 to p=0.001. For *the same model on the same data* across image
+# variants, ANY systematic delta is purely numerical, but these reference
+# points give a meaningful pharmacometric ruler: delta < 3.84 means no two
+# tags would disagree about a nested model comparison at the 5% level.
+one_per <- unique(pop_pop[, c("tag", "ctl", "model_class", "advan", "is_ode",
+                              "ofv", "converged", "nm_version", "arch")])
 ofv_conv <- one_per[one_per$converged & is.finite(one_per$ofv), ]
+
+CHI2_DF1 <- c(p_05 = 3.84, p_01 = 6.63, p_001 = 10.83)
+
 ofv_summary <- ofv_conv %>%
-  group_by(ctl) %>%
+  group_by(ctl, model_class, advan, is_ode) %>%
   summarise(
-    n_tags     = n(),
-    median_ofv = median(ofv),
-    min_ofv    = min(ofv),
-    max_ofv    = max(ofv),
-    range_ofv  = max(ofv) - min(ofv),
-    rel_range  = (max(ofv) - min(ofv)) / abs(median(ofv)),
-    .groups    = "drop"
+    n_tags         = n(),
+    median_ofv     = median(ofv),
+    min_ofv        = min(ofv),
+    max_ofv        = max(ofv),
+    range_ofv      = max(ofv) - min(ofv),
+    max_abs_dev    = max(abs(ofv - median(ofv))),
+    pct_within_385 = 100 * mean(abs(ofv - median(ofv)) < CHI2_DF1["p_05"]),
+    pct_within_663 = 100 * mean(abs(ofv - median(ofv)) < CHI2_DF1["p_01"]),
+    pct_within_1083 = 100 * mean(abs(ofv - median(ofv)) < CHI2_DF1["p_001"]),
+    .groups        = "drop"
   ) %>%
-  arrange(desc(rel_range))
+  arrange(desc(range_ofv))
 write.csv(ofv_summary, file.path(data_dir, "ofv_summary.csv"), row.names = FALSE)
 cat(sprintf("Wrote %s (%d CTLs)\n",
             file.path(data_dir, "ofv_summary.csv"), nrow(ofv_summary)))
+
+# ---------------------------------------------------------------------------
+# Stage 7b: per-CTL reproducibility score and per-model-class roll-up.
+# `pct_good` = fraction of (tag x parameter) combinations that fall in the
+# identical or noise tier (i.e. < 1e-3 relative diff). Higher is better.
+ctl_meta <- unique(pop_pop[, c("ctl", "model_dir", "model_class", "advan",
+                               "trans", "is_ode", "is_mm")])
+ctl_score <- score_reproducibility(pop_pop, by = "ctl")
+ctl_score <- merge(ctl_score, ctl_meta, by = "ctl", all.x = TRUE)
+write.csv(ctl_score[order(ctl_score$pct_good), ],
+          file.path(data_dir, "ctl_reproducibility.csv"), row.names = FALSE)
+cat(sprintf("Wrote %s\n", file.path(data_dir, "ctl_reproducibility.csv")))
+
+class_score <- score_reproducibility(pop_pop, by = c("model_class", "is_ode"))
+write.csv(class_score, file.path(data_dir, "model_class_reproducibility.csv"),
+          row.names = FALSE)
+cat(sprintf("Wrote %s\n",
+            file.path(data_dir, "model_class_reproducibility.csv")))
 
 # ---------------------------------------------------------------------------
 # Stage 8: convergence matrix.
@@ -277,6 +310,8 @@ save_pdf(plot_tier_heatmap(pop_pop), "heatmap_diff_classes.pdf",
          width = 16, height = 10)
 save_pdf(plot_variance_decomp(decomp), "variance_decomp_summary.pdf",
          width = 12, height = 10)
+save_pdf(plot_ctl_reproducibility(pop_pop), "ctl_reproducibility.pdf",
+         width = 12, height = 12)
 save_pdf(plot_convergence(pop), "convergence_matrix.pdf",
          width = 16, height = 10)
 
@@ -353,26 +388,71 @@ for (i in seq_len(min(10, nrow(top_decomp)))) {
 }
 add("")
 
-add("## OFV variability — top 10 CTLs with widest range")
-add("| ctl | n_tags | median OFV | range | range/|median| |")
-add("|-----|------:|----------:|------:|--------------:|")
+add("## OFV variability across image variants")
+add("OFV is -2 log-likelihood, so absolute deltas map to a chi-squared(df=1)")
+add("ruler: delta < 3.84 is non-significant at p=0.05 in a likelihood-ratio")
+add("test, < 6.63 at p=0.01, < 10.83 at p=0.001. Any systematic delta for")
+add("the same model on the same data is purely numerical, but these")
+add("thresholds tell us whether the disagreement would change a typical")
+add("nested-model comparison.\n")
+add("Aggregate across all (ctl x converged tag) pairs:")
+all_dev <- abs(ofv_conv$ofv - ave(ofv_conv$ofv, ofv_conv$ctl, FUN = function(x) median(x, na.rm = TRUE)))
+add("- N comparisons: %d", length(all_dev))
+add("- Pairs with |delta OFV| < 3.84:  %d (%.2f%%)",
+    sum(all_dev < CHI2_DF1["p_05"]),  100 * mean(all_dev < CHI2_DF1["p_05"]))
+add("- Pairs with |delta OFV| < 6.63:  %d (%.2f%%)",
+    sum(all_dev < CHI2_DF1["p_01"]),  100 * mean(all_dev < CHI2_DF1["p_01"]))
+add("- Pairs with |delta OFV| < 10.83: %d (%.2f%%)",
+    sum(all_dev < CHI2_DF1["p_001"]), 100 * mean(all_dev < CHI2_DF1["p_001"]))
+add("- Maximum |delta OFV| observed: %.4g", max(all_dev))
+add("")
+add("### Top 10 CTLs by OFV range")
+add("| ctl | model class | n_tags | median OFV | range OFV | max |dev| | %% within 3.84 |")
+add("|-----|-------------|------:|----------:|---------:|---------:|--------------:|")
 for (i in seq_len(min(10, nrow(ofv_summary)))) {
   r <- ofv_summary[i, ]
-  add("| %s | %d | %.4g | %.4g | %.2e |",
-      r$ctl, r$n_tags, r$median_ofv, r$range_ofv, r$rel_range)
+  add("| %s | %s | %d | %.4g | %.4g | %.4g | %.1f%% |",
+      r$ctl, r$model_class %||% "?", r$n_tags,
+      r$median_ofv, r$range_ofv, r$max_abs_dev, r$pct_within_385)
+}
+add("")
+
+add("## Reproducibility ranking by CTL — least reproducible first")
+add("`pct_good` = fraction of (tag x parameter) cells in identical or noise")
+add("tier (i.e., relative diff < 1e-3). Fixed parameters are excluded.\n")
+add("| ctl | model class | advan | n params | %% good | %% major |")
+add("|-----|-------------|-------|--------:|-------:|--------:|")
+for (i in seq_len(min(15, nrow(ctl_score)))) {
+  r <- ctl_score[i, ]
+  add("| %s | %s | %s | %d | %.1f%% | %.1f%% |",
+      r$ctl, r$model_class %||% "?", r$advan %||% "?",
+      r$n, r$pct_good, r$pct_major)
+}
+add("")
+
+add("## Reproducibility by model class")
+add("| model class | is_ode | n params | %% good | %% major |")
+add("|-------------|:------:|--------:|-------:|--------:|")
+for (i in seq_len(nrow(class_score))) {
+  r <- class_score[i, ]
+  add("| %s | %s | %d | %.1f%% | %.1f%% |",
+      r$model_class %||% "?", r$is_ode %||% "?",
+      r$n, r$pct_good, r$pct_major)
 }
 add("")
 
 add("## Output files")
-add("- `outputs/data/nonmem_compare.csv` — population-level tidy data")
-add("- `outputs/data/nonmem_compare_individuals.csv` — per-subject ETAs")
-add("- `outputs/data/pairwise_diffs.csv` — relative diffs from per-CTL median")
-add("- `outputs/data/diff_summary.csv` — tier counts per parameter class")
-add("- `outputs/data/variance_decomp.csv` — variance share by factor")
-add("- `outputs/data/ofv_summary.csv` — per-CTL OFV statistics")
-add("- `outputs/data/convergence_matrix.csv` — (ctl × tag) status")
-add("- `outputs/figures/*.pdf` — visualisations")
-add("- `outputs/parsed_results.rds` — cache of raw nmlst() output")
+add("- `outputs/data/nonmem_compare.csv` - population-level tidy data")
+add("- `outputs/data/nonmem_compare_individuals.csv` - per-subject ETAs")
+add("- `outputs/data/pairwise_diffs.csv` - relative diffs from per-CTL median")
+add("- `outputs/data/diff_summary.csv` - tier counts per parameter class")
+add("- `outputs/data/variance_decomp.csv` - variance share by factor")
+add("- `outputs/data/ofv_summary.csv` - per-CTL OFV statistics in chi-squared units")
+add("- `outputs/data/ctl_reproducibility.csv` - per-CTL reproducibility score")
+add("- `outputs/data/model_class_reproducibility.csv` - per-class reproducibility score")
+add("- `outputs/data/convergence_matrix.csv` - (ctl x tag) status")
+add("- `outputs/figures/*.pdf` - visualisations")
+add("- `outputs/parsed_results.rds` - cache of raw nmlst() output")
 
 writeLines(md, file.path(out_dir, "analysis_report.md"))
 cat(sprintf("Wrote %s\n", file.path(out_dir, "analysis_report.md")))

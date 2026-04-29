@@ -184,42 +184,101 @@ plot_tier_heatmap <- function(df) {
 }
 
 # ---------------------------------------------------------------------------
-# Variance decomposition stacked bars. Rows = (ctl, param_name), bar width = 1,
-# each bar segmented by share attributable to each factor. Sorted by total
-# variance descending so the most-variable parameters appear on top.
-plot_variance_decomp <- function(decomp_df, top_n = 50L) {
+# Variance decomposition stacked bars, facetted by param_type so each type
+# (theta / omega / eta_shrinkage / epsilon_shrinkage) gets its own panel.
+# Within each panel, rows = (ctl, param_name) sorted by total across-tag
+# variance descending; up to `top_n` per panel.
+plot_variance_decomp <- function(decomp_df, top_n = 20L) {
   d <- decomp_df[is.finite(decomp_df$var_total) & decomp_df$var_total > 0, , drop = FALSE]
   if (nrow(d) == 0L) return(ggplot() + labs(title = "(no decomposable variance)"))
 
-  d$param_label <- paste(d$ctl, d$param_name, sep = " — ")
-  d <- d[order(-d$var_total), , drop = FALSE]
-  if (nrow(d) > top_n) d <- d[seq_len(top_n), , drop = FALSE]
+  # Keep top_n most variable per param_type
+  d <- do.call(rbind, lapply(split(d, d$param_type), function(sub) {
+    sub <- sub[order(-sub$var_total), , drop = FALSE]
+    head(sub, top_n)
+  }))
+  d$param_label <- paste(d$ctl, d$param_name, sep = " : ")
 
+  factor_levels <- c("NONMEM version", "Ubuntu version", "gfortran version",
+                     "Architecture", "Residual")
   long <- data.frame(
+    param_type  = rep(d$param_type, 5),
     param_label = rep(d$param_label, 5),
-    factor = rep(c("NONMEM version", "Ubuntu version", "gfortran version", "Architecture", "Residual"),
-                 each = nrow(d)),
-    share = c(d$share_nm_version, d$share_ubuntu_version,
-              d$share_gfortran_version, d$share_arch, d$share_residual)
+    factor      = rep(factor_levels, each = nrow(d)),
+    share       = c(d$share_nm_version, d$share_ubuntu_version,
+                    d$share_gfortran_version, d$share_arch, d$share_residual),
+    stringsAsFactors = FALSE
   )
-  long$factor <- factor(long$factor, levels = c(
-    "NONMEM version", "Ubuntu version", "gfortran version", "Architecture", "Residual"
-  ))
-  long$param_label <- factor(long$param_label, levels = rev(d$param_label))
+  long$factor <- factor(long$factor, levels = factor_levels)
+  # Sort each panel by total variance: build a global ordering that preserves
+  # within-type rank, then apply as factor levels.
+  ordered_labels <- d$param_label  # already in within-type variance order
+  long$param_label <- factor(long$param_label, levels = rev(ordered_labels))
 
   ggplot(long, aes(y = param_label, x = share, fill = factor)) +
     geom_col() +
+    facet_wrap(~ param_type, scales = "free_y", ncol = 1) +
     scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
     scale_fill_brewer(palette = "Set2") +
     labs(
       x = "Share of variance",
       y = NULL,
       fill = NULL,
-      title = sprintf("Variance attribution (top %d most variable parameters)",
-                      nrow(d))
+      title = sprintf("Variance attribution (up to %d most variable parameters per type)",
+                      top_n)
     ) +
     theme_minimal(base_size = 8) +
-    theme(axis.text.y = element_text(size = 6))
+    theme(axis.text.y = element_text(size = 6),
+          strip.text  = element_text(size = 9, face = "bold"))
+}
+
+# ---------------------------------------------------------------------------
+# Per-parameter-type aggregate: show the median factor share with IQR
+# as horizontal error-bar-style points. Single panel summarises the
+# central question "for this class of parameter, which factor explains
+# the most?"
+plot_variance_by_type <- function(by_type_df) {
+  if (nrow(by_type_df) == 0L) return(ggplot() + labs(title = "(no data)"))
+
+  factors <- c(
+    NM_version       = "share_nm_version",
+    Ubuntu_version   = "share_ubuntu_version",
+    gfortran_version = "share_gfortran_version",
+    Architecture     = "share_arch",
+    Residual         = "share_residual"
+  )
+  rows <- list()
+  for (i in seq_len(nrow(by_type_df))) {
+    for (lbl in names(factors)) {
+      stem <- factors[[lbl]]
+      rows[[length(rows) + 1L]] <- data.frame(
+        param_type = by_type_df$param_type[i],
+        n_params   = by_type_df$n_params[i],
+        factor     = lbl,
+        median     = by_type_df[[paste0(stem, "_median")]][i],
+        q25        = by_type_df[[paste0(stem, "_q25")]][i],
+        q75        = by_type_df[[paste0(stem, "_q75")]][i],
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+  long <- do.call(rbind, rows)
+  long$factor <- factor(long$factor, levels = names(factors))
+
+  ggplot(long, aes(x = median, y = factor, colour = param_type)) +
+    geom_errorbarh(aes(xmin = q25, xmax = q75),
+                   position = position_dodge(width = 0.6),
+                   height = 0, linewidth = 0.4) +
+    geom_point(position = position_dodge(width = 0.6), size = 2.5) +
+    scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+    scale_colour_brewer(palette = "Dark2") +
+    labs(
+      x = "Median share of variance (bars = IQR)",
+      y = NULL,
+      colour = "param type",
+      title = "Variance attribution by parameter type"
+    ) +
+    theme_minimal(base_size = 9)
 }
 
 # ---------------------------------------------------------------------------

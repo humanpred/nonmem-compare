@@ -232,6 +232,16 @@ write.csv(decomp, file.path(data_dir, "variance_decomp.csv"),
 cat(sprintf("Wrote %s (%d parameter rows)\n",
             file.path(data_dir, "variance_decomp.csv"), nrow(decomp)))
 
+# Per-param-type aggregate: median/mean factor shares across all parameters
+# of each type. Lets us answer "how much does NM version explain for theta
+# parameters as a class" without being dominated by any single CTL.
+decomp_by_type <- aggregate_variance_by_type(decomp)
+write.csv(decomp_by_type, file.path(data_dir, "variance_decomp_by_type.csv"),
+          row.names = FALSE)
+cat(sprintf("Wrote %s (%d param types)\n",
+            file.path(data_dir, "variance_decomp_by_type.csv"),
+            nrow(decomp_by_type)))
+
 # ---------------------------------------------------------------------------
 # Stage 7: OFV summary per CTL.
 #
@@ -309,7 +319,10 @@ save_pdf(plot_ofv_distribution(pop), "ofv_distribution.pdf",
 save_pdf(plot_tier_heatmap(pop_pop), "heatmap_diff_classes.pdf",
          width = 16, height = 10)
 save_pdf(plot_variance_decomp(decomp), "variance_decomp_summary.pdf",
-         width = 12, height = 10)
+         width = 12, height = 14)
+save_pdf(plot_variance_by_type(decomp_by_type),
+         "variance_decomp_by_type.pdf",
+         width = 9, height = 5)
 save_pdf(plot_ctl_reproducibility(pop_pop), "ctl_reproducibility.pdf",
          width = 12, height = 12)
 save_pdf(plot_convergence(pop), "convergence_matrix.pdf",
@@ -371,22 +384,50 @@ for (pt in unique(diff_summary$param_type)) {
 }
 add("")
 
-add("## Variance decomposition — top 10 most-variable parameters")
-add("Per-parameter share of variance attributable to each factor (Type II SS,")
-add("converged runs only). Higher share = factor explains more of the spread.\n")
-add("| ctl | param | n | NM | Ubuntu | gfortran | arch | residual |")
-add("|-----|-------|--:|---:|-------:|---------:|-----:|---------:|")
-top_decomp <- decomp[order(-decomp$var_total), ]
-for (i in seq_len(min(10, nrow(top_decomp)))) {
-  r <- top_decomp[i, ]
-  fmt <- function(x) if (is.na(x)) "—" else sprintf("%.1f%%", 100 * x)
-  add("| %s | %s | %d | %s | %s | %s | %s | %s |",
-      r$ctl, r$param_name, r$n_obs,
-      fmt(r$share_nm_version), fmt(r$share_ubuntu_version),
-      fmt(r$share_gfortran_version), fmt(r$share_arch),
-      fmt(r$share_residual))
+add("## Variance decomposition by parameter type")
+add("Type II SS shares averaged across all parameters of a given type. Each")
+add("factor's column shows median (Q25 / Q75) of its share across parameters")
+add("of that type that have non-zero across-tag variance.\n")
+add("| param_type | n params | NM version | Ubuntu | gfortran | arch | residual |")
+add("|------------|--------:|------------|--------|----------|------|----------|")
+fmt_iqr <- function(med, q25, q75) {
+  if (is.na(med)) return("—")
+  sprintf("%.1f%% (%.1f / %.1f)", 100 * med, 100 * q25, 100 * q75)
+}
+for (i in seq_len(nrow(decomp_by_type))) {
+  r <- decomp_by_type[i, ]
+  add("| %s | %d | %s | %s | %s | %s | %s |",
+      r$param_type, r$n_params,
+      fmt_iqr(r$share_nm_version_median,       r$share_nm_version_q25,       r$share_nm_version_q75),
+      fmt_iqr(r$share_ubuntu_version_median,   r$share_ubuntu_version_q25,   r$share_ubuntu_version_q75),
+      fmt_iqr(r$share_gfortran_version_median, r$share_gfortran_version_q25, r$share_gfortran_version_q75),
+      fmt_iqr(r$share_arch_median,             r$share_arch_q25,             r$share_arch_q75),
+      fmt_iqr(r$share_residual_median,         r$share_residual_q25,         r$share_residual_q75))
 }
 add("")
+
+add("### Top 10 most-variable parameters per type")
+add("Per-parameter Type II SS shares for the most-variable individual")
+add("parameters (highest across-tag variance) within each parameter type.")
+add("Useful for spotting *which* parameters are pulling each type's average.\n")
+fmt_pct <- function(x) if (is.na(x)) "—" else sprintf("%.1f%%", 100 * x)
+for (pt in c("theta", "omega", "eta_shrinkage", "epsilon_shrinkage")) {
+  sub <- decomp[decomp$param_type == pt, , drop = FALSE]
+  if (nrow(sub) == 0L) next
+  sub <- sub[order(-sub$var_total), ]
+  add("#### %s", pt)
+  add("| ctl | param | n | NM | Ubuntu | gfortran | arch | residual |")
+  add("|-----|-------|--:|---:|-------:|---------:|-----:|---------:|")
+  for (i in seq_len(min(10, nrow(sub)))) {
+    r <- sub[i, ]
+    add("| %s | %s | %d | %s | %s | %s | %s | %s |",
+        r$ctl, r$param_name, r$n_obs,
+        fmt_pct(r$share_nm_version), fmt_pct(r$share_ubuntu_version),
+        fmt_pct(r$share_gfortran_version), fmt_pct(r$share_arch),
+        fmt_pct(r$share_residual))
+  }
+  add("")
+}
 
 add("## OFV variability across image variants")
 add("OFV is -2 log-likelihood, so absolute deltas map to a chi-squared(df=1)")

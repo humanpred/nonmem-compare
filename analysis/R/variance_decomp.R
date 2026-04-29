@@ -138,3 +138,41 @@ decompose_variance <- function(df) {
 
   do.call(rbind, rows)
 }
+
+#' Aggregate per-parameter variance shares by param_type.
+#'
+#' For each param_type (theta / omega / sigma / eta_shrinkage /
+#' epsilon_shrinkage) compute the median, mean, and IQR of each factor's
+#' share across all (ctl, param_name) entries with usable variance. This
+#' answers the publication-grade question "for theta parameters as a class,
+#' how much of the across-tag variance does NONMEM version explain
+#' on average?"
+#'
+#' @param decomp_df output of decompose_variance().
+#' @return data.frame with one row per param_type and columns giving the
+#'   median, mean, and IQR (Q25, Q75) of each factor's share, plus n_params.
+aggregate_variance_by_type <- function(decomp_df) {
+  d <- decomp_df[is.finite(decomp_df$var_total) & decomp_df$var_total > 0, ,
+                 drop = FALSE]
+  if (nrow(d) == 0L) return(data.frame())
+
+  factors <- c("share_nm_version", "share_ubuntu_version",
+               "share_gfortran_version", "share_arch", "share_residual")
+
+  out_list <- lapply(split(d, d$param_type), function(sub) {
+    row <- list(
+      param_type = unique(sub$param_type),
+      n_params   = nrow(sub)
+    )
+    for (f in factors) {
+      v <- sub[[f]]
+      v <- v[is.finite(v)]
+      row[[paste0(f, "_median")]] <- if (length(v)) median(v) else NA_real_
+      row[[paste0(f, "_mean")]]   <- if (length(v)) mean(v)   else NA_real_
+      row[[paste0(f, "_q25")]]    <- if (length(v)) quantile(v, 0.25, names = FALSE) else NA_real_
+      row[[paste0(f, "_q75")]]    <- if (length(v)) quantile(v, 0.75, names = FALSE) else NA_real_
+    }
+    as.data.frame(row, stringsAsFactors = FALSE)
+  })
+  do.call(rbind, out_list)
+}
